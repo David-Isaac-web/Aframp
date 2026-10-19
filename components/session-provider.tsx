@@ -14,9 +14,11 @@ import {
 
 // #633: token is now stored in an HTTP-only cookie via /api/session,
 // not in localStorage. No token is ever readable by client-side JS.
+// #855: the bearer token is no longer kept in the frontend at all — the
+// backend's own HttpOnly `aframp_session` cookie authenticates every request
+// through the same-origin /backend proxy.
 
 interface Session {
-  token: string
   userId: string
   merchantId: string | null
 }
@@ -48,13 +50,12 @@ const SessionContext = createContext<SessionContextValue | null>(null)
 
 function toSession(response: AuthResponse): Session {
   return {
-    token: response.token,
     userId: response.user_id,
     merchantId: response.merchant_id,
   }
 }
 
-/** Persist the session to the HTTP-only cookie via the API route. */
+/** Persist the non-secret session fields to the HTTP-only cookie via the API route. */
 async function persistCookie(next: Session): Promise<void> {
   await fetch('/api/session', {
     method: 'POST',
@@ -75,11 +76,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   // #633: on mount, read the session from the HTTP-only cookie via
   // /api/session (GET). This replaces the localStorage read.
+  // #855: the response only carries non-secret fields (userId, merchantId).
   useEffect(() => {
     fetch('/api/session')
       .then((res) => res.json() as Promise<Session | null>)
       .then((stored) => {
-        if (stored?.token) setSession(stored)
+        if (stored?.userId) setSession(stored)
       })
       .catch(() => {
         // Network error on startup — start with no session.
@@ -122,7 +124,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   )
 
   const signOut = useCallback(() => {
-    if (session) api.logout(session.token).catch(() => {})
+    if (session) api.logout().catch(() => {})
     clearCookie().catch(() => {})
     setSession(null)
     setMe(null)
@@ -133,7 +135,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       throw new Error('refreshMe called without a session')
     }
     try {
-      const data = await api.getMe(session.token)
+      const data = await api.getMe()
       setMe(data)
       return { success: true as const, data }
     } catch (cause) {

@@ -9,7 +9,16 @@ export async function GET() {
   const value = cookieStore.get(COOKIE_NAME)?.value
   if (!value) return NextResponse.json(null)
   try {
-    return NextResponse.json(JSON.parse(value))
+    const parsed = JSON.parse(value) as {
+      token?: string
+      userId?: string
+      merchantId?: string | null
+    }
+    // Never expose the bearer token to page JavaScript; only non-secret fields.
+    return NextResponse.json({
+      userId: parsed.userId ?? null,
+      merchantId: parsed.merchantId ?? null,
+    })
   } catch {
     return NextResponse.json(null)
   }

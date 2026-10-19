@@ -86,22 +86,24 @@ export function stringifyWithBigInts(value: unknown): string {
 export interface RequestOptions {
   method?: 'GET' | 'POST' | 'DELETE'
   body?: unknown
-  token?: string
   signal?: AbortSignal
 }
 
 /** Exported for tests: the single fetch wrapper every `api.*` call funnels through. */
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, token, signal } = options
+  const { method = 'GET', body, signal } = options
 
   let response: Response
   try {
+    // Auth rides on the backend's HttpOnly `aframp_session` cookie, which the
+    // browser attaches automatically to same-origin `/backend` requests. No
+    // bearer token is ever held in page JavaScript.
     response = await fetch(`${BASE_URL}${path}`, {
       method,
       signal,
+      credentials: 'same-origin',
       headers: {
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: body === undefined ? undefined : stringifyWithBigInts(body),
     })
@@ -120,9 +122,10 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const text = await response.text()
 
   if (!response.ok) {
-    // Only for calls that actually carried a token — a 401 from /login is a
-    // wrong password, not an expired session.
-    if (response.status === 401 && token) onUnauthorized?.()
+    // A 401 from an authenticated call means the session cookie expired or was
+    // cleared. Login/signup/verify calls are unauthenticated, so a 401 there is
+    // a wrong credential, not an expired session — those paths are excluded.
+    if (response.status === 401 && !UNAUTHENTICATED_PATHS.has(path)) onUnauthorized?.()
 
     let message = `Request failed (${response.status})`
     let code: string | undefined
@@ -140,3 +143,9 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   return text ? parseWithBigInts<T>(text) : (undefined as T)
 }
+
+/**
+ * Endpoints that are expected to answer 401 for bad credentials rather than an
+ * expired session. A 401 here must not trigger the global sign-out handler.
+ */
+const UNAUTHENTICATED_PATHS = new Set(['/auth/login', '/auth/signup', '/auth/verify'])
